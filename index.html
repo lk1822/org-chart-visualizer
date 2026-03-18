@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Org Chart Builder</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -326,6 +327,8 @@
     <input type="text" class="search-box" placeholder="Search name, title, assignment..." id="searchInput" />
     <button onclick="expandAll()">Expand All</button>
     <button onclick="collapseAll()">Collapse All</button>
+    <button onclick="downloadPNG()">Download PNG</button>
+    <button onclick="downloadHTML()">Download HTML</button>
     <button class="reload-btn" onclick="showUpload()">&#8635; Upload New File</button>
   </div>
 </div>
@@ -567,6 +570,136 @@ document.getElementById('searchInput').addEventListener('input', function() {
     }
   });
 });
+
+// ===== DOWNLOAD =====
+function downloadPNG() {
+  const chart = document.querySelector('.chart-container');
+  // Temporarily expand all nodes so the full chart is captured
+  const collapsed = document.querySelectorAll('.tree-li.collapsed');
+  const wasCollapsed = [...collapsed];
+  expandAll();
+
+  html2canvas(chart, {
+    backgroundColor: '#f5f6f8',
+    scale: 2,
+    scrollX: 0,
+    scrollY: 0,
+    windowWidth: chart.scrollWidth,
+    windowHeight: chart.scrollHeight
+  }).then(canvas => {
+    // Restore collapsed state
+    wasCollapsed.forEach(li => {
+      li.classList.add('collapsed');
+      const btn = li.querySelector(':scope > .node > .toggle-btn');
+      if (btn) btn.textContent = '+';
+    });
+
+    const link = document.createElement('a');
+    link.download = 'org-chart.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  }).catch(() => {
+    wasCollapsed.forEach(li => {
+      li.classList.add('collapsed');
+      const btn = li.querySelector(':scope > .node > .toggle-btn');
+      if (btn) btn.textContent = '+';
+    });
+    alert('Failed to generate image. Try with a smaller chart or fewer expanded nodes.');
+  });
+}
+
+function downloadHTML() {
+  // Expand all so the exported file shows everything
+  const collapsed = document.querySelectorAll('.tree-li.collapsed');
+  const wasCollapsed = [...collapsed];
+  expandAll();
+
+  const treeHTML = document.getElementById('orgTree').innerHTML;
+  const statsHTML = document.getElementById('statsBar').innerHTML;
+
+  // Restore collapsed state
+  wasCollapsed.forEach(li => {
+    li.classList.add('collapsed');
+    const btn = li.querySelector(':scope > .node > .toggle-btn');
+    if (btn) btn.textContent = '+';
+  });
+
+  // Grab all styles from the page
+  const styles = document.querySelector('style').textContent;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Org Chart</title>
+<style>${styles}</style>
+</head>
+<body>
+<div class="header">
+  <h1>Org Chart</h1>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> US</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div> India</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#e2e8f0;border:2px dashed #a0aec0"></div> Vacant</div>
+  </div>
+  <div class="controls">
+    <input type="text" class="search-box" placeholder="Search name, title, assignment..." id="searchInput" />
+    <button onclick="expandAll()">Expand All</button>
+    <button onclick="collapseAll()">Collapse All</button>
+  </div>
+</div>
+<div class="stats-bar" id="statsBar">${statsHTML}</div>
+<div id="chartScreen">
+  <div class="chart-container">
+    <div class="tree" id="orgTree">${treeHTML}</div>
+  </div>
+</div>
+<script>
+function toggleNode(btn) {
+  var li = btn.closest('.tree-li');
+  li.classList.toggle('collapsed');
+  btn.innerHTML = li.classList.contains('collapsed') ? '+' : '\\u2212';
+}
+function expandAll() {
+  document.querySelectorAll('.tree-li.collapsed').forEach(function(li) {
+    li.classList.remove('collapsed');
+    var btn = li.querySelector(':scope > .node > .toggle-btn');
+    if (btn) btn.innerHTML = '\\u2212';
+  });
+}
+function collapseAll() {
+  document.querySelectorAll('.tree-li').forEach(function(li) {
+    if (li.querySelector(':scope > ul')) {
+      li.classList.add('collapsed');
+      var btn = li.querySelector(':scope > .node > .toggle-btn');
+      if (btn) btn.textContent = '+';
+    }
+  });
+}
+document.getElementById('searchInput').addEventListener('input', function() {
+  var q = this.value.toLowerCase().trim();
+  document.querySelectorAll('.node').forEach(function(n) { n.classList.remove('highlight'); });
+  if (!q) return;
+  expandAll();
+  document.querySelectorAll('.node').forEach(function(n) {
+    if (n.dataset.name.includes(q) || n.dataset.title.includes(q) || n.dataset.assign.includes(q)) {
+      n.classList.add('highlight');
+      n.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  });
+});
+<\/script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const link = document.createElement('a');
+  link.download = 'org-chart.html';
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
 </script>
 </body>
 </html>
