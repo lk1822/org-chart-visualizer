@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Org Chart Builder</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #f5f6f8;
+    color: #1a202c;
+    overflow: auto;
+  }
+
+  /* ===== HEADER ===== */
+  .header {
+    background: linear-gradient(135deg, #1e3a5f 0%, #2d5a8e 100%);
+    color: white;
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+  }
+  .header h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
+  .legend { display: flex; gap: 18px; font-size: 13px; align-items: center; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .controls button {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.2s;
+  }
+  .controls button:hover { background: rgba(255,255,255,0.25); }
+  .search-box {
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.15);
+    color: white;
+    font-size: 13px;
+    width: 200px;
+  }
+  .search-box::placeholder { color: rgba(255,255,255,0.6); }
+  .search-box:focus { outline: none; background: rgba(255,255,255,0.25); }
+
+  .stats-bar {
+    display: flex; gap: 24px; padding: 12px 32px;
+    background: white;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 13px;
+    color: #4a5568;
+    flex-wrap: wrap;
+  }
+  .stat { display: flex; gap: 4px; }
+  .stat strong { color: #1a202c; }
+
+  /* ===== UPLOAD ZONE ===== */
+  .upload-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: calc(100vh - 80px);
+    padding: 40px;
+  }
+  .upload-zone {
+    border: 3px dashed #cbd5e0;
+    border-radius: 20px;
+    padding: 60px 80px;
+    text-align: center;
+    background: white;
+    transition: all 0.3s;
+    max-width: 560px;
+    width: 100%;
+    cursor: pointer;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: #3b82f6;
+    background: #eff6ff;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px rgba(59,130,246,0.12);
+  }
+  .upload-zone.drag-over { border-color: #2563eb; background: #dbeafe; }
+  .upload-icon {
+    width: 72px; height: 72px; margin: 0 auto 20px;
+    background: #eff6ff; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px;
+  }
+  .upload-zone h2 { font-size: 20px; font-weight: 600; color: #1e3a5f; margin-bottom: 8px; }
+  .upload-zone p { font-size: 14px; color: #718096; margin-bottom: 20px; line-height: 1.5; }
+  .upload-btn {
+    display: inline-block;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+    padding: 10px 28px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+  }
+  .upload-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(37,99,235,0.3); }
+  .upload-hint {
+    margin-top: 16px;
+    font-size: 12px;
+    color: #a0aec0;
+  }
+  .upload-hint code {
+    background: #f0f4f8;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  #fileInput { display: none; }
+
+  /* ===== RELOAD BUTTON ===== */
+  .reload-btn {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .reload-btn:hover { background: rgba(255,255,255,0.25); }
+
+  /* ===== ERROR ===== */
+  .error-msg {
+    background: #fef2f2;
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+    padding: 12px 20px;
+    border-radius: 8px;
+    margin: 20px 32px;
+    font-size: 14px;
+  }
+
+  /* ===== CHART ===== */
+  .chart-container { padding: 32px; overflow: auto; }
+
+  .tree ul {
+    list-style: none;
+    padding-left: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .tree-li {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    position: relative;
+    padding: 3px 0;
+  }
+  .tree-li > ul { padding-left: 28px; position: relative; }
+  .tree-li > ul::before {
+    content: '';
+    position: absolute;
+    left: 14px; top: 0; bottom: 0;
+    width: 2px;
+    background: #d0d5dd;
+  }
+  .tree-li > ul > .tree-li::before {
+    content: '';
+    position: absolute;
+    left: -14px; top: 22px;
+    width: 14px; height: 2px;
+    background: #d0d5dd;
+  }
+  .tree-li > ul > .tree-li:first-child::after {
+    content: '';
+    position: absolute;
+    left: -14px; top: 0; height: 22px;
+    width: 2px;
+    background: #f5f6f8;
+    z-index: 1;
+  }
+  .tree-li > ul > .tree-li:last-child::after {
+    content: '';
+    position: absolute;
+    left: -14px; top: 24px; bottom: 0;
+    width: 2px;
+    background: #f5f6f8;
+    z-index: 1;
+  }
+  .tree > ul > .tree-li::before,
+  .tree > ul > .tree-li::after { display: none; }
+  .tree > ul::before { display: none; }
+
+  .node {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 10px;
+    padding: 7px 14px;
+    cursor: default;
+    transition: all 0.2s;
+    white-space: nowrap;
+    position: relative;
+    flex-shrink: 0;
+    border-left: 4px solid;
+  }
+  .node:hover { transform: translateX(2px); }
+  .node.highlight { box-shadow: 0 0 0 3px #facc15, 0 4px 16px rgba(250,204,21,0.35) !important; }
+
+  /* US = Blue */
+  .node.loc-us {
+    background: #eff6ff;
+    border-left-color: #3b82f6;
+    box-shadow: 0 1px 4px rgba(59,130,246,0.1);
+  }
+  .node.loc-us:hover { box-shadow: 0 4px 16px rgba(59,130,246,0.18); }
+  .node.loc-us .node-title { color: #6b7fa8; }
+  .node.loc-us .node-assignment { background: #dbeafe; color: #1e40af; }
+  .node.loc-us.level-0 {
+    background: linear-gradient(135deg, #1e3a5f, #2563eb);
+    color: white;
+    border-left-color: #1e3a5f;
+    box-shadow: 0 2px 8px rgba(37,99,235,0.3);
+  }
+  .node.loc-us.level-0 .node-title { color: rgba(255,255,255,0.8); }
+  .node.loc-us.level-0 .node-assignment { background: rgba(255,255,255,0.2); color: white; }
+  .node.loc-us.level-0 .count-badge { background: rgba(255,255,255,0.25); color: white; }
+  .node.loc-us.level-1 { border-left-color: #2563eb; }
+  .node.loc-us.level-2 { border-left-color: #3b82f6; }
+  .node.loc-us.level-3 { border-left-color: #60a5fa; }
+  .node.loc-us.level-4 { border-left-color: #93c5fd; }
+  .node.loc-us.level-5, .node.loc-us.level-6 { border-left-color: #bfdbfe; }
+
+  /* India = Orange */
+  .node.loc-india {
+    background: #fff7ed;
+    border-left-color: #f97316;
+    box-shadow: 0 1px 4px rgba(249,115,22,0.1);
+  }
+  .node.loc-india:hover { box-shadow: 0 4px 16px rgba(249,115,22,0.18); }
+  .node.loc-india .node-title { color: #9a7a5a; }
+  .node.loc-india .node-assignment { background: #ffedd5; color: #9a3412; }
+  .node.loc-india.level-1 { border-left-color: #ea580c; }
+  .node.loc-india.level-2 { border-left-color: #f97316; }
+  .node.loc-india.level-3 { border-left-color: #fb923c; }
+  .node.loc-india.level-4 { border-left-color: #fdba74; }
+  .node.loc-india.level-5, .node.loc-india.level-6 { border-left-color: #fed7aa; }
+
+  .node.vacant { opacity: 0.5; border-left-style: dashed; }
+
+  .loc-badge {
+    font-size: 9px; font-weight: 700;
+    padding: 2px 6px; border-radius: 4px;
+    letter-spacing: 0.5px; flex-shrink: 0;
+    text-transform: uppercase;
+  }
+  .badge-us { background: #3b82f6; color: white; }
+  .badge-india { background: #f97316; color: white; }
+  .node.loc-us.level-0 .badge-us { background: rgba(255,255,255,0.25); }
+
+  .node-info { display: flex; flex-direction: column; gap: 1px; }
+  .node-name { font-weight: 600; font-size: 13px; line-height: 1.3; }
+  .node-title { font-size: 11px; line-height: 1.3; }
+  .node-assignment {
+    display: inline-block;
+    font-size: 9px; font-weight: 600;
+    padding: 1px 6px; border-radius: 3px;
+    letter-spacing: 0.3px; margin-top: 2px;
+    width: fit-content;
+  }
+
+  .toggle-btn {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: white;
+    border: 2px solid #d0d5dd;
+    color: #718096;
+    font-size: 13px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; z-index: 2;
+    transition: all 0.2s;
+    line-height: 1;
+    flex-shrink: 0; margin-left: 4px;
+  }
+  .toggle-btn:hover { background: #f0f0f0; border-color: #a0aec0; }
+
+  .count-badge {
+    font-size: 10px;
+    background: #e2e8f0; color: #4a5568;
+    padding: 1px 6px; border-radius: 8px;
+    margin-left: 4px; font-weight: 600;
+  }
+
+  .collapsed > ul { display: none; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Org Chart Builder</h1>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> US</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div> India</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#e2e8f0;border:2px dashed #a0aec0"></div> Vacant</div>
+  </div>
+  <div class="controls" id="chartControls" class="hidden">
+    <input type="text" class="search-box" placeholder="Search name, title, assignment..." id="searchInput" />
+    <button onclick="expandAll()">Expand All</button>
+    <button onclick="collapseAll()">Collapse All</button>
+    <button class="reload-btn" onclick="showUpload()">&#8635; Upload New File</button>
+  </div>
+</div>
+
+<div class="stats-bar hidden" id="statsBar"></div>
+
+<!-- Upload Screen -->
+<div class="upload-wrapper" id="uploadScreen">
+  <div class="upload-zone" id="dropZone">
+    <div class="upload-icon">&#128202;</div>
+    <h2>Upload Your Org Chart</h2>
+    <p>Drop your Excel file here, or click to browse.<br>The chart will be generated instantly.</p>
+    <button class="upload-btn" onclick="document.getElementById('fileInput').click()">Choose Excel File</button>
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
+    <div class="upload-hint">
+      Expected columns: <code>Name</code> <code>Title</code> <code>Location</code> <code>Reports To</code> <code>Assignment</code> (optional)
+    </div>
+  </div>
+</div>
+
+<!-- Chart Screen -->
+<div class="hidden" id="chartScreen">
+  <div id="errorArea"></div>
+  <div class="chart-container">
+    <div class="tree" id="orgTree"></div>
+  </div>
+</div>
+
+<script>
+// ===== FILE HANDLING =====
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) processFile(file);
+});
+dropZone.addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') fileInput.click();
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) processFile(e.target.files[0]);
+});
+
+function processFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      buildChart(rows);
+    } catch (err) {
+      showError('Failed to parse the file: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function showError(msg) {
+  document.getElementById('errorArea').innerHTML = `<div class="error-msg">${msg}</div>`;
+}
+
+function showUpload() {
+  document.getElementById('uploadScreen').classList.remove('hidden');
+  document.getElementById('chartScreen').classList.add('hidden');
+  document.getElementById('chartControls').classList.add('hidden');
+  document.getElementById('statsBar').classList.add('hidden');
+  document.getElementById('errorArea').innerHTML = '';
+  document.getElementById('searchInput').value = '';
+  fileInput.value = '';
+}
+
+// ===== CHART BUILDER =====
+function buildChart(rows) {
+  // Normalize column names (case-insensitive match)
+  const colMap = {};
+  if (rows.length === 0) { showError('The file appears to be empty.'); return; }
+  const rawCols = Object.keys(rows[0]);
+  const expected = { name: 'Name', title: 'Title', location: 'Location', reportsto: 'Reports To', assignment: 'Assignment' };
+  rawCols.forEach(c => {
+    const key = c.toLowerCase().replace(/[\s_]/g, '');
+    if (key === 'name') colMap.name = c;
+    else if (key === 'title') colMap.title = c;
+    else if (key === 'location') colMap.location = c;
+    else if (key === 'reportsto' || key === 'reportingto' || key === 'manager') colMap.reportsTo = c;
+    else if (key === 'assignment' || key === 'assignments') colMap.assignment = c;
+  });
+
+  if (!colMap.name || !colMap.title || !colMap.location || !colMap.reportsTo) {
+    showError('Missing required columns. Expected: Name, Title, Location, Reports To. Found: ' + rawCols.join(', '));
+    return;
+  }
+
+  // Build data array
+  const data = rows.map((r, i) => ({
+    name: String(r[colMap.name] || '').trim(),
+    title: String(r[colMap.title] || '').trim(),
+    loc: String(r[colMap.location] || '').trim(),
+    reportsTo: String(r[colMap.reportsTo] || '').trim() || null,
+    assign: colMap.assignment ? String(r[colMap.assignment] || '').trim() : '',
+    _key: '',
+    children: [],
+    _desc: 0
+  }));
+
+  // Key + lookups
+  const byName = {};
+  const byTitle = {};
+  let vacantIdx = 0;
+  data.forEach((p, i) => {
+    p._key = (p.name === 'Vacant' || p.name === '') ? 'vacant_' + (vacantIdx++) : p.name + '_' + i;
+    if (p.name && p.name !== 'Vacant') byName[p.name] = p;
+    if (p.title) byTitle[p.title] = p;
+  });
+
+  // Build tree
+  let root = null;
+  const orphans = [];
+  data.forEach(p => {
+    if (!p.reportsTo) { root = p; return; }
+    const parent = byName[p.reportsTo] || byTitle[p.reportsTo];
+    if (parent) parent.children.push(p);
+    else orphans.push(p);
+  });
+
+  if (!root) { showError('Could not find the root node (a row with no "Reports To" value).'); return; }
+
+  // Attach orphans to root as fallback
+  orphans.forEach(o => root.children.push(o));
+
+  function countDesc(node) {
+    let c = 0;
+    node.children.forEach(ch => { c += 1 + countDesc(ch); });
+    node._desc = c;
+    return c;
+  }
+  countDesc(root);
+
+  // Stats
+  const total = data.length;
+  const vacant = data.filter(d => d.name === 'Vacant' || d.name === '').length;
+  const locations = {};
+  data.forEach(d => { locations[d.loc] = (locations[d.loc] || 0) + 1; });
+  const assignments = [...new Set(data.map(d => d.assign).filter(a => a))];
+
+  let statsHtml =
+    `<div class="stat"><strong>${total}</strong> Total Positions</div>` +
+    `<div class="stat"><strong>${total - vacant}</strong> Filled</div>` +
+    `<div class="stat"><strong>${vacant}</strong> Vacant</div>`;
+  Object.entries(locations).forEach(([loc, cnt]) => {
+    const color = loc === 'US' ? '#3b82f6' : loc === 'India' ? '#f97316' : '#718096';
+    statsHtml += `<div class="stat" style="color:${color}"><strong>${cnt}</strong> ${loc}</div>`;
+  });
+  if (assignments.length) statsHtml += `<div class="stat"><strong>${assignments.length}</strong> Assignments</div>`;
+
+  document.getElementById('statsBar').innerHTML = statsHtml;
+
+  // Render
+  function renderNode(node, level) {
+    const isVacant = node.name === 'Vacant' || node.name === '';
+    const hasChildren = node.children.length > 0;
+    const isUS = node.loc === 'US';
+    const locCls = isUS ? 'loc-us' : 'loc-india';
+    const badgeCls = isUS ? 'badge-us' : 'badge-india';
+
+    let html = `<li class="tree-li" data-key="${node._key}">`;
+    html += `<div class="node ${locCls} level-${Math.min(level,6)} ${isVacant ? 'vacant' : ''}" data-name="${node.name.toLowerCase()}" data-title="${node.title.toLowerCase()}" data-assign="${(node.assign||'').toLowerCase()}">`;
+    html += `<span class="loc-badge ${badgeCls}">${node.loc}</span>`;
+    html += `<div class="node-info">`;
+    html += `<span class="node-name">${node.name || 'Vacant'}${node._desc > 0 ? ` <span class="count-badge">${node._desc}</span>` : ''}</span>`;
+    html += `<span class="node-title">${node.title}</span>`;
+    if (node.assign) html += `<span class="node-assignment">${node.assign}</span>`;
+    html += `</div>`;
+    if (hasChildren) html += `<span class="toggle-btn" onclick="toggleNode(this)">&#8722;</span>`;
+    html += `</div>`;
+
+    if (hasChildren) {
+      html += `<ul>`;
+      node.children.forEach(ch => { html += renderNode(ch, level + 1); });
+      html += `</ul>`;
+    }
+    html += `</li>`;
+    return html;
+  }
+
+  document.getElementById('orgTree').innerHTML = `<ul>${renderNode(root, 0)}</ul>`;
+
+  // Show chart, hide upload
+  document.getElementById('uploadScreen').classList.add('hidden');
+  document.getElementById('chartScreen').classList.remove('hidden');
+  document.getElementById('chartControls').classList.remove('hidden');
+  document.getElementById('statsBar').classList.remove('hidden');
+  document.getElementById('errorArea').innerHTML = '';
+
+  if (orphans.length > 0) {
+    showError(`Note: ${orphans.length} row(s) had unrecognized "Reports To" values and were attached under the root.`);
+  }
+}
+
+// ===== TREE CONTROLS =====
+function toggleNode(btn) {
+  const li = btn.closest('.tree-li');
+  li.classList.toggle('collapsed');
+  btn.innerHTML = li.classList.contains('collapsed') ? '+' : '&#8722;';
+}
+
+function expandAll() {
+  document.querySelectorAll('.tree-li.collapsed').forEach(li => {
+    li.classList.remove('collapsed');
+    const btn = li.querySelector(':scope > .node > .toggle-btn');
+    if (btn) btn.innerHTML = '&#8722;';
+  });
+}
+
+function collapseAll() {
+  document.querySelectorAll('.tree-li').forEach(li => {
+    if (li.querySelector(':scope > ul')) {
+      li.classList.add('collapsed');
+      const btn = li.querySelector(':scope > .node > .toggle-btn');
+      if (btn) btn.textContent = '+';
+    }
+  });
+}
+
+document.getElementById('searchInput').addEventListener('input', function() {
+  const q = this.value.toLowerCase().trim();
+  document.querySelectorAll('.node').forEach(n => n.classList.remove('highlight'));
+  if (!q) return;
+  expandAll();
+  document.querySelectorAll('.node').forEach(n => {
+    if (n.dataset.name.includes(q) || n.dataset.title.includes(q) || n.dataset.assign.includes(q)) {
+      n.classList.add('highlight');
+      n.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  });
+});
+</script>
+</body>
+</html>
