@@ -314,6 +314,37 @@
   .collapsed > ul { display: none; }
 
   .hidden { display: none !important; }
+
+  /* ===== EDITABLE ===== */
+  .node-info [contenteditable] {
+    cursor: text;
+    border-bottom: 1px dashed rgba(0,0,0,0.2);
+    outline: none;
+    min-width: 30px;
+    border-radius: 2px;
+  }
+  .node-info [contenteditable]:focus {
+    background: rgba(255,255,255,0.9);
+    box-shadow: 0 0 0 2px #3b82f6;
+    border-bottom-color: transparent;
+    color: #1a202c;
+    padding: 0 3px;
+  }
+  .node-info [contenteditable]:hover:not(:focus) {
+    background: rgba(255,255,255,0.4);
+  }
+
+  /* ===== DRAG & DROP ===== */
+  .node[draggable="true"] { cursor: grab; }
+  .node[draggable="true"]:active { cursor: grabbing; }
+  .node.drag-over-target {
+    box-shadow: 0 0 0 3px #10b981, 0 4px 16px rgba(16,185,129,0.35) !important;
+  }
+  .node.dragging { opacity: 0.4; }
+  .edit-hint {
+    font-size: 11px; color: rgba(255,255,255,0.5);
+    margin-left: 12px;
+  }
 </style>
 </head>
 <body>
@@ -331,7 +362,9 @@
     <button onclick="collapseAll()">Collapse All</button>
     <button onclick="downloadPNG()">Download PNG</button>
     <button onclick="downloadHTML()">Download HTML</button>
+    <button onclick="exportExcel()">Export Excel</button>
     <button class="reload-btn" onclick="showUpload()">&#8635; Upload New File</button>
+    <span class="edit-hint">Double-click to edit &middot; Drag to move</span>
   </div>
 </div>
 
@@ -360,6 +393,11 @@
 </div>
 
 <script>
+// ===== GLOBAL STATE =====
+let chartRoot = null;
+let chartData = [];
+const nodeMap = {};
+
 // ===== FILE HANDLING =====
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
@@ -406,15 +444,15 @@ function showUpload() {
   document.getElementById('errorArea').innerHTML = '';
   document.getElementById('searchInput').value = '';
   fileInput.value = '';
+  chartRoot = null;
+  chartData = [];
 }
 
 // ===== CHART BUILDER =====
 function buildChart(rows) {
-  // Normalize column names (case-insensitive match)
   const colMap = {};
   if (rows.length === 0) { showError('The file appears to be empty.'); return; }
   const rawCols = Object.keys(rows[0]);
-  const expected = { name: 'Name', title: 'Title', location: 'Location', reportsto: 'Reports To', assignment: 'Assignment' };
   rawCols.forEach(c => {
     const key = c.toLowerCase().replace(/[\s_]/g, '');
     if (key === 'name') colMap.name = c;
@@ -430,8 +468,7 @@ function buildChart(rows) {
     return;
   }
 
-  // Build data array
-  const data = rows.map((r, i) => ({
+  chartData = rows.map((r, i) => ({
     name: String(r[colMap.name] || '').trim(),
     title: String(r[colMap.title] || '').trim(),
     loc: String(r[colMap.location] || '').trim(),
@@ -440,33 +477,47 @@ function buildChart(rows) {
     assign: colMap.assignment ? String(r[colMap.assignment] || '').trim() : '',
     _key: '',
     children: [],
-    _desc: 0
+    _desc: 0,
+    _parent: null
   }));
 
-  // Key + lookups
+  rebuildTree();
+
+  document.getElementById('uploadScreen').classList.add('hidden');
+  document.getElementById('chartScreen').classList.remove('hidden');
+  document.getElementById('chartControls').classList.remove('hidden');
+  document.getElementById('statsBar').classList.remove('hidden');
+  document.getElementById('errorArea').innerHTML = '';
+}
+
+function rebuildTree() {
+  // Reset children
+  chartData.forEach(p => { p.children = []; p._parent = null; });
+
+  // Keys + lookups
   const byName = {};
   const byTitle = {};
   let vacantIdx = 0;
-  data.forEach((p, i) => {
+  Object.keys(nodeMap).forEach(k => delete nodeMap[k]);
+
+  chartData.forEach((p, i) => {
     p._key = (p.name === 'Vacant' || p.name === '') ? 'vacant_' + (vacantIdx++) : p.name + '_' + i;
+    nodeMap[p._key] = p;
     if (p.name && p.name !== 'Vacant') byName[p.name] = p;
     if (p.title) byTitle[p.title] = p;
   });
 
-  // Build tree
-  let root = null;
+  chartRoot = null;
   const orphans = [];
-  data.forEach(p => {
-    if (!p.reportsTo) { root = p; return; }
+  chartData.forEach(p => {
+    if (!p.reportsTo) { chartRoot = p; return; }
     const parent = byName[p.reportsTo] || byTitle[p.reportsTo];
-    if (parent) parent.children.push(p);
+    if (parent) { parent.children.push(p); p._parent = parent; }
     else orphans.push(p);
   });
 
-  if (!root) { showError('Could not find the root node (a row with no "Reports To" value).'); return; }
-
-  // Attach orphans to root as fallback
-  orphans.forEach(o => root.children.push(o));
+  if (!chartRoot) { showError('Could not find the root node.'); return; }
+  orphans.forEach(o => { chartRoot.children.push(o); o._parent = chartRoot; });
 
   function countDesc(node) {
     let c = 0;
@@ -474,14 +525,18 @@ function buildChart(rows) {
     node._desc = c;
     return c;
   }
-  countDesc(root);
+  countDesc(chartRoot);
 
-  // Stats
-  const total = data.length;
-  const vacant = data.filter(d => d.name === 'Vacant' || d.name === '').length;
+  renderStats();
+  renderTree();
+}
+
+function renderStats() {
+  const total = chartData.length;
+  const vacant = chartData.filter(d => d.name === 'Vacant' || d.name === '').length;
   const locations = {};
-  data.forEach(d => { locations[d.loc] = (locations[d.loc] || 0) + 1; });
-  const assignments = [...new Set(data.map(d => d.assign).filter(a => a))];
+  chartData.forEach(d => { locations[d.loc] = (locations[d.loc] || 0) + 1; });
+  const assignments = [...new Set(chartData.map(d => d.assign).filter(a => a))];
 
   let statsHtml =
     `<div class="stat"><strong>${total}</strong> Total Positions</div>` +
@@ -492,50 +547,154 @@ function buildChart(rows) {
     statsHtml += `<div class="stat" style="color:${color}"><strong>${cnt}</strong> ${loc}</div>`;
   });
   if (assignments.length) statsHtml += `<div class="stat"><strong>${assignments.length}</strong> Assignments</div>`;
-
   document.getElementById('statsBar').innerHTML = statsHtml;
+}
 
-  // Render
-  function renderNode(node, level) {
-    const isVacant = node.name === 'Vacant' || node.name === '';
-    const hasChildren = node.children.length > 0;
-    const isUS = node.loc === 'US';
-    const locCls = isUS ? 'loc-us' : 'loc-india';
-    const badgeCls = isUS ? 'badge-us' : 'badge-india';
+function renderTree() {
+  if (!chartRoot) return;
+  // Save collapsed state
+  const collapsedKeys = new Set();
+  document.querySelectorAll('.tree-li.collapsed').forEach(li => collapsedKeys.add(li.dataset.key));
 
-    let html = `<li class="tree-li" data-key="${node._key}">`;
-    html += `<div class="node ${locCls} level-${Math.min(level,6)} ${isVacant ? 'vacant' : ''}" data-name="${node.name.toLowerCase()}" data-title="${node.title.toLowerCase()}" data-assign="${(node.assign||'').toLowerCase()}" data-empid="${(node.empId||'').toLowerCase()}">`;
-    html += `<span class="loc-badge ${badgeCls}">${node.loc}</span>`;
-    html += `<div class="node-info">`;
-    html += `<span class="node-name">${node.name || 'Vacant'}${node._desc > 0 ? ` <span class="count-badge">${node._desc}</span>` : ''}</span>`;
-    if (node.empId) html += `<span class="node-id">${node.empId}</span>`;
-    html += `<span class="node-title">${node.title}</span>`;
-    if (node.assign) html += `<span class="node-assignment">${node.assign}</span>`;
-    html += `</div>`;
-    if (hasChildren) html += `<span class="toggle-btn" onclick="toggleNode(this)">&#8722;</span>`;
-    html += `</div>`;
+  document.getElementById('orgTree').innerHTML = `<ul>${renderNode(chartRoot, 0, collapsedKeys)}</ul>`;
+  setupDragAndDrop();
+}
 
-    if (hasChildren) {
-      html += `<ul>`;
-      node.children.forEach(ch => { html += renderNode(ch, level + 1); });
-      html += `</ul>`;
+function renderNode(node, level, collapsedKeys) {
+  const isVacant = node.name === 'Vacant' || node.name === '';
+  const hasChildren = node.children.length > 0;
+  const isUS = node.loc === 'US';
+  const locCls = isUS ? 'loc-us' : 'loc-india';
+  const badgeCls = isUS ? 'badge-us' : 'badge-india';
+  const isCollapsed = collapsedKeys && collapsedKeys.has(node._key);
+
+  let html = `<li class="tree-li${isCollapsed ? ' collapsed' : ''}" data-key="${node._key}">`;
+  html += `<div class="node ${locCls} level-${Math.min(level,6)} ${isVacant ? 'vacant' : ''}" draggable="true" data-key="${node._key}" data-name="${node.name.toLowerCase()}" data-title="${node.title.toLowerCase()}" data-assign="${(node.assign||'').toLowerCase()}" data-empid="${(node.empId||'').toLowerCase()}">`;
+  html += `<span class="loc-badge ${badgeCls}">${node.loc}</span>`;
+  html += `<div class="node-info">`;
+  html += `<span class="node-name" data-field="name">${node.name || 'Vacant'}${node._desc > 0 ? ` <span class="count-badge">${node._desc}</span>` : ''}</span>`;
+  if (node.empId) html += `<span class="node-id" data-field="empId">${node.empId}</span>`;
+  html += `<span class="node-title" data-field="title">${node.title}</span>`;
+  if (node.assign) html += `<span class="node-assignment" data-field="assign">${node.assign}</span>`;
+  html += `</div>`;
+  if (hasChildren) html += `<span class="toggle-btn" onclick="toggleNode(this)">${isCollapsed ? '+' : '&#8722;'}</span>`;
+  html += `</div>`;
+
+  if (hasChildren) {
+    html += `<ul>`;
+    node.children.forEach(ch => { html += renderNode(ch, level + 1, collapsedKeys); });
+    html += `</ul>`;
+  }
+  html += `</li>`;
+  return html;
+}
+
+// ===== INLINE EDITING =====
+document.getElementById('orgTree').addEventListener('dblclick', function(e) {
+  const span = e.target.closest('[data-field]');
+  if (!span) return;
+  const nodeEl = span.closest('.node');
+  if (!nodeEl) return;
+  const key = nodeEl.dataset.key;
+  const node = nodeMap[key];
+  if (!node) return;
+  const field = span.dataset.field;
+
+  // Remove count badge from name before editing
+  const badge = span.querySelector('.count-badge');
+  if (badge) badge.remove();
+
+  const currentVal = node[field] || '';
+  span.textContent = currentVal;
+  span.contentEditable = true;
+  span.focus();
+
+  // Select all text
+  const range = document.createRange();
+  range.selectNodeContents(span);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(range);
+
+  function commit() {
+    span.contentEditable = false;
+    const newVal = span.textContent.trim();
+    if (newVal !== currentVal) {
+      node[field] = newVal;
+      // Update reportsTo references if name changed
+      if (field === 'name') {
+        chartData.forEach(d => {
+          if (d.reportsTo === currentVal) d.reportsTo = newVal;
+        });
+      }
+      rebuildTree();
+    } else {
+      renderTree();
     }
-    html += `</li>`;
-    return html;
   }
 
-  document.getElementById('orgTree').innerHTML = `<ul>${renderNode(root, 0)}</ul>`;
+  span.addEventListener('blur', commit, { once: true });
+  span.addEventListener('keydown', function(ev) {
+    if (ev.key === 'Enter') { ev.preventDefault(); span.blur(); }
+    if (ev.key === 'Escape') { span.textContent = currentVal; span.contentEditable = false; renderTree(); }
+  });
+});
 
-  // Show chart, hide upload
-  document.getElementById('uploadScreen').classList.add('hidden');
-  document.getElementById('chartScreen').classList.remove('hidden');
-  document.getElementById('chartControls').classList.remove('hidden');
-  document.getElementById('statsBar').classList.remove('hidden');
-  document.getElementById('errorArea').innerHTML = '';
+// ===== DRAG & DROP =====
+let dragKey = null;
 
-  if (orphans.length > 0) {
-    showError(`Note: ${orphans.length} row(s) had unrecognized "Reports To" values and were attached under the root.`);
-  }
+function setupDragAndDrop() {
+  document.querySelectorAll('.node[draggable]').forEach(nodeEl => {
+    nodeEl.addEventListener('dragstart', e => {
+      dragKey = nodeEl.dataset.key;
+      nodeEl.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragKey);
+    });
+    nodeEl.addEventListener('dragend', () => {
+      nodeEl.classList.remove('dragging');
+      document.querySelectorAll('.drag-over-target').forEach(n => n.classList.remove('drag-over-target'));
+      dragKey = null;
+    });
+    nodeEl.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (nodeEl.dataset.key !== dragKey) nodeEl.classList.add('drag-over-target');
+    });
+    nodeEl.addEventListener('dragleave', () => {
+      nodeEl.classList.remove('drag-over-target');
+    });
+    nodeEl.addEventListener('drop', e => {
+      e.preventDefault();
+      nodeEl.classList.remove('drag-over-target');
+      const targetKey = nodeEl.dataset.key;
+      if (!dragKey || dragKey === targetKey) return;
+
+      const dragNode = nodeMap[dragKey];
+      const targetNode = nodeMap[targetKey];
+      if (!dragNode || !targetNode) return;
+
+      // Prevent dropping a parent onto its own descendant
+      function isDescendant(parent, child) {
+        for (const ch of parent.children) {
+          if (ch._key === child._key || isDescendant(ch, child)) return true;
+        }
+        return false;
+      }
+      if (isDescendant(dragNode, targetNode)) return;
+
+      // Remove from old parent
+      if (dragNode._parent) {
+        dragNode._parent.children = dragNode._parent.children.filter(c => c._key !== dragKey);
+      }
+      // Update reportsTo
+      dragNode.reportsTo = targetNode.name || targetNode.title;
+      // Add to new parent
+      targetNode.children.push(dragNode);
+      dragNode._parent = targetNode;
+
+      rebuildTree();
+    });
+  });
 }
 
 // ===== TREE CONTROLS =====
@@ -576,10 +735,31 @@ document.getElementById('searchInput').addEventListener('input', function() {
   });
 });
 
+// ===== EXPORT EXCEL =====
+function exportExcel() {
+  const rows = [];
+  function flatten(node) {
+    rows.push({
+      'Name': node.name,
+      'Employee ID': node.empId,
+      'Title': node.title,
+      'Location': node.loc,
+      'Reports To': node.reportsTo || '',
+      'Assignment': node.assign
+    });
+    node.children.forEach(flatten);
+  }
+  flatten(chartRoot);
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Org Chart');
+  XLSX.writeFile(wb, 'org-chart.xlsx');
+}
+
 // ===== DOWNLOAD =====
 function downloadPNG() {
   const chart = document.querySelector('.chart-container');
-  // Temporarily expand all nodes so the full chart is captured
   const collapsed = document.querySelectorAll('.tree-li.collapsed');
   const wasCollapsed = [...collapsed];
   expandAll();
@@ -592,13 +772,11 @@ function downloadPNG() {
     windowWidth: chart.scrollWidth,
     windowHeight: chart.scrollHeight
   }).then(canvas => {
-    // Restore collapsed state
     wasCollapsed.forEach(li => {
       li.classList.add('collapsed');
       const btn = li.querySelector(':scope > .node > .toggle-btn');
       if (btn) btn.textContent = '+';
     });
-
     const link = document.createElement('a');
     link.download = 'org-chart.png';
     link.href = canvas.toDataURL('image/png');
@@ -614,7 +792,6 @@ function downloadPNG() {
 }
 
 function downloadHTML() {
-  // Expand all so the exported file shows everything
   const collapsed = document.querySelectorAll('.tree-li.collapsed');
   const wasCollapsed = [...collapsed];
   expandAll();
@@ -622,14 +799,12 @@ function downloadHTML() {
   const treeHTML = document.getElementById('orgTree').innerHTML;
   const statsHTML = document.getElementById('statsBar').innerHTML;
 
-  // Restore collapsed state
   wasCollapsed.forEach(li => {
     li.classList.add('collapsed');
     const btn = li.querySelector(':scope > .node > .toggle-btn');
     if (btn) btn.textContent = '+';
   });
 
-  // Grab all styles from the page
   const styles = document.querySelector('style').textContent;
 
   const html = `<!DOCTYPE html>
