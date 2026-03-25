@@ -205,9 +205,9 @@
     background: #f5f6f8;
     z-index: 1;
   }
-  /* Single child: hide the vertical trunk line entirely, just show the horizontal connector */
-  .tree-li > ul > .tree-li:only-child::after {
-    top: 0; bottom: 0;
+  /* Single child: hide the vertical trunk line, just show horizontal connector */
+  .tree-li > ul:has(> .tree-li:only-child)::before {
+    display: none;
   }
   .tree > ul > .tree-li::before,
   .tree > ul > .tree-li::after { display: none; }
