@@ -345,6 +345,11 @@
     font-size: 11px; color: rgba(255,255,255,0.5);
     margin-left: 12px;
   }
+  .controls button:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+  .controls button:disabled:hover { background: rgba(255,255,255,0.15); }
 </style>
 </head>
 <body>
@@ -358,6 +363,8 @@
   </div>
   <div class="controls" id="chartControls" class="hidden">
     <input type="text" class="search-box" placeholder="Search name, ID, title, assignment..." id="searchInput" />
+    <button id="undoBtn" onclick="undo()" disabled>Undo</button>
+    <button id="redoBtn" onclick="redo()" disabled>Redo</button>
     <button onclick="expandAll()">Expand All</button>
     <button onclick="collapseAll()">Collapse All</button>
     <button onclick="downloadPNG()">Download PNG</button>
@@ -397,6 +404,58 @@
 let chartRoot = null;
 let chartData = [];
 const nodeMap = {};
+
+// ===== UNDO / REDO =====
+const undoStack = [];
+const redoStack = [];
+const MAX_HISTORY = 50;
+
+function snapshotData() {
+  return chartData.map(d => ({ name: d.name, title: d.title, loc: d.loc, reportsTo: d.reportsTo, empId: d.empId, assign: d.assign }));
+}
+
+function restoreSnapshot(snap) {
+  snap.forEach((s, i) => {
+    chartData[i].name = s.name;
+    chartData[i].title = s.title;
+    chartData[i].loc = s.loc;
+    chartData[i].reportsTo = s.reportsTo;
+    chartData[i].empId = s.empId;
+    chartData[i].assign = s.assign;
+  });
+  rebuildTree();
+}
+
+function pushUndo() {
+  undoStack.push(snapshotData());
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  redoStack.length = 0;
+  updateUndoRedoButtons();
+}
+
+function undo() {
+  if (undoStack.length === 0) return;
+  redoStack.push(snapshotData());
+  restoreSnapshot(undoStack.pop());
+  updateUndoRedoButtons();
+}
+
+function redo() {
+  if (redoStack.length === 0) return;
+  undoStack.push(snapshotData());
+  restoreSnapshot(redoStack.pop());
+  updateUndoRedoButtons();
+}
+
+function updateUndoRedoButtons() {
+  document.getElementById('undoBtn').disabled = undoStack.length === 0;
+  document.getElementById('redoBtn').disabled = redoStack.length === 0;
+}
+
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
+});
 
 // ===== FILE HANDLING =====
 const dropZone = document.getElementById('dropZone');
@@ -446,6 +505,9 @@ function showUpload() {
   fileInput.value = '';
   chartRoot = null;
   chartData = [];
+  undoStack.length = 0;
+  redoStack.length = 0;
+  updateUndoRedoButtons();
 }
 
 // ===== CHART BUILDER =====
@@ -619,6 +681,7 @@ document.getElementById('orgTree').addEventListener('dblclick', function(e) {
     span.contentEditable = false;
     const newVal = span.textContent.trim();
     if (newVal !== currentVal) {
+      pushUndo();
       node[field] = newVal;
       // Update reportsTo references if name changed
       if (field === 'name') {
@@ -682,6 +745,7 @@ function setupDragAndDrop() {
       }
       if (isDescendant(dragNode, targetNode)) return;
 
+      pushUndo();
       // Remove from old parent
       if (dragNode._parent) {
         dragNode._parent.children = dragNode._parent.children.filter(c => c._key !== dragKey);
